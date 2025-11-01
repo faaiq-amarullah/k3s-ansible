@@ -1,0 +1,69 @@
+k3s_cluster:
+  children:
+    server:
+      hosts:
+        10.8.60.93:
+        10.8.60.94:
+        10.8.60.95:
+
+  # Required Vars
+  vars:
+    ansible_port: 22
+    ansible_user: user
+    k3s_version: v1.33.1+k3s1
+    api_endpoint: "10.8.60.100"
+    api_port: "6443"
+    extra_service_envs: [ 'CATTLE_NEW_SIGNED_CERT_EXPIRATION_DAYS=3650' ]
+
+    server_config_yaml: |
+      server: "https://10.8.60.100:6443"
+      token: "vWobQYSpq8Qfz17rYEdbe6sX3zPtTK7WK01QGY0ZPMppAK9rjBvldlWIowxmydNx"
+      node-name: "{{ ansible_hostname }}"
+      node-ip: "{{ ansible_default_ipv4.address }}"
+      etcd-expose-metrics: "true"
+      tls-san:
+        - "api.k3s.my.test"
+        - "127.0.0.1"
+        - "10.8.60.100"
+      cluster-cidr: "10.100.0.0/16"
+      service-cidr: "10.101.0.0/16"
+      flannel-backend: "none"
+      disable-network-policy: "true"
+      # valid items: coredns, servicelb, traefik, local-storage, metrics-server
+      disable:
+        - "traefik"
+        - "servicelb"
+        - "local-storage"
+      node-label:
+        - "control=true"
+      kube-controller-manager-arg:
+        - "bind-address=0.0.0.0"
+      kube-scheduler-arg:
+        - "bind-address=0.0.0.0"
+      kube-proxy-arg:
+        - "metrics-bind-address=0.0.0.0"
+      kubelet-arg:
+        - "anonymous-auth=false"
+        - "eviction-max-pod-grace-period=60"
+        - "kube-reserved=cpu=200m,memory=512Mi,ephemeral-storage=1Gi"
+        - "system-reserved=cpu=200m,memory=512Mi,ephemeral-storage=1Gi"
+        - "eviction-hard=memory.available<200Mi,nodefs.available<10%,nodefs.inodesFree<5%"
+        - "eviction-soft=memory.available<500Mi,nodefs.available<10%,nodefs.inodesFree<10%"
+        - "eviction-soft-grace-period=memory.available=1m,nodefs.available=1m,nodefs.inodesFree=1m"
+        - "image-gc-high-threshold=85"
+        - "image-gc-low-threshold=80"
+        - "max-pods=250"
+      kube-apiserver-arg:
+        - "audit-log-path=/var/lib/rancher/k3s/server/logs/audit.log"
+        - "audit-policy-file=/var/lib/rancher/k3s/server/audit.yaml"
+        - "audit-log-maxage=30"
+        - "audit-log-maxbackup=10"
+        - "audit-log-maxsize=100"
+        - "default-not-ready-toleration-seconds=30"
+        - "default-unreachable-toleration-seconds=30"
+
+    audit_config_yaml: |
+      apiVersion: audit.k8s.io/v1
+      kind: Policy
+      rules:
+        - level: Metadata

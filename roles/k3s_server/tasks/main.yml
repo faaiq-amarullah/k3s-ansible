@@ -46,43 +46,40 @@
     regexp: '\.\s+<\(k3s completion bash\)'
     line: ". <(k3s completion bash)  # Added by k3s-ansible"
 
-- name: Determine if tls-san is already in config or args
-  # noqa var-naming[no-role-prefix]
+- name: Parse server_config_yaml
   ansible.builtin.set_fact:
-    _api_endpoint_in_config: >-
-      {% if server_config_yaml is defined and api_endpoint is defined and server_config_yaml | regex_search('tls-san:.*' + api_endpoint | regex_escape(), ignorecase=True) %}
-      true
-      {% else %}
-      false
-      {% endif %}
-    _api_endpoint_in_args: >-
-      {% if api_endpoint is defined and extra_server_args | regex_search('--tls-san[=\s]+' + api_endpoint | regex_escape(), ignorecase=True) %}
-      true
-      {% else %}
-      false
-      {% endif %}
-
-- name: Add TLS SAN to agent arguments if needed
-  # noqa var-naming[no-role-prefix]
-  when:
-    - api_endpoint is defined
-    - api_endpoint != ansible_hostname
-    - not (_api_endpoint_in_config | trim | bool)
-    - not (_api_endpoint_in_args | trim | bool)
-  ansible.builtin.set_fact:
-    opt_tls_san: "--tls-san={{ api_endpoint }}"
-
+    server_config: "{{ server_config_yaml | from_yaml }}"
 
 - name: Setup optional config file
   when: server_config_yaml is defined
   block:
     - name: Make config directory
       ansible.builtin.file:
-        path: "/etc/rancher/k3s"
+        path: "{{ item }}"
         mode: "0755"
         state: directory
+      with_items:
+        - /etc/rancher/k3s
+        - /var/lib/rancher/k3s/server/tls
+        - /var/lib/rancher/k3s/server/logs
+        - /var/lib/rancher/k3s/agent/etc/containerd
+
+    - name: Configure audit log behaviour
+      when: audit_config_yaml is defined
+      block:
+        - name: Extract audit log path
+          set_fact:
+            audit_policy_file: "{{ server_config['kube-apiserver-arg']
+                                    | select('search','^audit-policy-file=')
+                                    | map('regex_replace','^audit-policy-file=','')
+                                    | list | first | default('') }}"
+        - name: Copy config values
+          ansible.builtin.copy:
+            content: "{{ audit_config_yaml }}"
+            dest: "{{ audit_policy_file }}"
+            mode: "0644"
+
     - name: Copy config values
-      # noqa var-naming[no-role-prefix]
       ansible.builtin.copy:
         content: "{{ server_config_yaml }}"
         dest: "/etc/rancher/k3s/config.yaml"
@@ -92,35 +89,27 @@
 - name: Init first server node
   when: inventory_hostname == groups[server_group][0] or ansible_host == groups[server_group][0]
   block:
-    - name: Copy K3s service file [Single/External DB]
-      # noqa var-naming[no-role-prefix]
-      when: groups[server_group] | length == 1 or use_external_database
-      ansible.builtin.template:
-        src: "k3s.service.j2"
-        dest: "{{ systemd_dir }}/k3s.service"
-        owner: root
-        group: root
-        mode: "0644"
-      vars:
-        cluster_init: false
-        join: false
-      register: service_file_single
+    - name: Add the cluster init for init the cluster [Embedded ETCD]
+      when: server_config.datastore-endpoint is not defined
+      ansible.builtin.lineinfile:
+        path: "/etc/rancher/k3s/config.yaml"
+        line: "cluster-init: true"
+        insertbefore: BOF
 
-    - name: Copy K3s service file [HA-IC]
-      # noqa var-naming[no-role-prefix]
-      when:
-        - groups[server_group] | length > 1
-        - not use_external_database
+    - name: Remove any server line from K3s config
+      ansible.builtin.lineinfile:
+        path: /etc/rancher/k3s/config.yaml
+        regexp: '^server:'
+        state: absent
+
+    - name: Copy K3s service file
       ansible.builtin.template:
         src: "k3s.service.j2"
         dest: "{{ systemd_dir }}/k3s.service"
         owner: root
         group: root
         mode: "0644"
-      vars:
-        cluster_init: true
-        join: false
-      register: service_file_ha
+      register: service_file
 
     - name: Add service environment variables
       when: extra_service_envs is defined
@@ -129,26 +118,11 @@
         line: "{{ item }}"
       with_items: "{{ extra_service_envs }}"
 
-    - name: Delete any existing token from the environment if different from the new one
-      ansible.builtin.lineinfile:
-        state: absent
-        path: "{{ systemd_dir }}/k3s.service.env"
-        regexp: "^K3S_TOKEN=\\s*(?!{{ token | default('') | regex_escape }}\\s*$)"
-
-    # Add the token to the environment if it has been provided.
-    # Otherwise, let the first server create one on the first run.
-    - name: Add token as an environment variable
-      no_log: true # avoid logging the server token
-      ansible.builtin.lineinfile:
-        path: "{{ systemd_dir }}/k3s.service.env"
-        line: "K3S_TOKEN={{ token }}"
-      when: token is defined
-
     - name: Restart K3s service
       when:
         - ansible_facts.services['k3s.service'] is defined
         - ansible_facts.services['k3s.service'].state == 'running'
-        - service_file_single.changed or service_file_ha.changed or _server_config_result.changed
+        - service_file.changed
       ansible.builtin.systemd:
         name: k3s
         daemon_reload: true
@@ -229,7 +203,7 @@
             - k3s_server_mv_result.rc == 0
 
     - name: Get the token if randomly generated
-      when: token is not defined
+      when: server_config.token is not defined or server_config.token | length == 0
       block:
         - name: Wait for token
           ansible.builtin.wait_for:
@@ -245,16 +219,20 @@
           ansible.builtin.set_fact:
             token: "{{ k3s_server_node_token.content | b64decode | regex_replace('\n', '') }}"
 
+        - name: Propagate token from first server to all nodes
+          ansible.builtin.set_fact:
+            token: "{{ hostvars[groups[server_group][0]].token }}"
+          when:
+            - (groups[server_group] | length) > 1
+            - inventory_hostname != groups[server_group][0] and ansible_host != groups[server_group][0]
+          run_once: false
+          delegate_facts: true
+
 - name: Start other server if any and verify status
   when:
     - (groups[server_group] | length) > 1
     - inventory_hostname != groups[server_group][0] and ansible_host != groups[server_group][0]
   block:
-    - name: Get the token from the first server
-      # noqa var-naming[no-role-prefix]
-      ansible.builtin.set_fact:
-        token: "{{ hostvars[groups[server_group][0]].token }}"
-
     - name: Add service environment variables
       when: extra_service_envs is defined
       ansible.builtin.lineinfile:
@@ -262,32 +240,21 @@
         line: "{{ item }}"
       with_items: "{{ extra_service_envs }}"
 
-    - name: Delete any existing token from the environment if different from the new one
-      ansible.builtin.lineinfile:
-        state: absent
-        path: "{{ systemd_dir }}/k3s.service.env"
-        regexp: "^K3S_TOKEN=\\s*(?!{{ token }}\\s*$)"
-
     - name: Add the token for joining the cluster to the environment
       no_log: true # avoid logging the server token
       ansible.builtin.lineinfile:
-        path: "{{ systemd_dir }}/k3s.service.env"
-        line: "{{ item }}"
-      with_items:
-        - "K3S_TOKEN={{ token }}"
+        path: "/etc/rancher/k3s/config.yaml"
+        line: "token: {{ token }}"
+        insertbefore: BOF
+      when: server_config.token is not defined or server_config.token | length == 0
 
-    # When using an external database, no join is needed, instead, users should be
-    # supplying the datastore-endpoint in the extra_server_args or server_config_yaml
-    - name: Copy K3s service file [HA-J]
+    - name: Copy K3s service file
       ansible.builtin.template:
         src: "k3s.service.j2"
         dest: "{{ systemd_dir }}/k3s.service"
         owner: root
         group: root
         mode: "0644"
-      vars:
-        join: "{{ not use_external_database }}"
-        cluster_init: false
       register: k3s_server_service_file
 
     - name: Restart K3s service
@@ -322,7 +289,6 @@
 - name: Setup kubectl for user
   when: user_kubectl
   block:
-
     - name: Create directory .kube
       ansible.builtin.file:
         path: ~{{ ansible_user }}/.kube
