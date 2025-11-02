@@ -30,6 +30,7 @@ k3s_cluster:
       disable-network-policy: "true"
       # valid items: coredns, servicelb, traefik, local-storage, metrics-server
       disable:
+        - "coredns"
         - "traefik"
         - "servicelb"
         - "local-storage"
