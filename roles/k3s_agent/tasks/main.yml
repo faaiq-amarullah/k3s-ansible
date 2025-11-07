@@ -57,10 +57,15 @@
         mode: "0644"
       register: _agent_config_result
 
-- name: Get the token from the first server
-  # noqa var-naming[no-role-prefix]
-  ansible.builtin.set_fact:
-    token: "{{ hostvars[groups[server_group][0]].token }}"
+- name: Add the token for joining the cluster to the environment
+  no_log: true # avoid logging the server token
+  ansible.builtin.lineinfile:
+    path: "/etc/rancher/k3s/config.yaml"
+    line: "token: {{ token }}"
+    insertbefore: BOF
+  when:
+    - (server_config_yaml | from_yaml)['token'] is not defined or (server_config_yaml | from_yaml)['token'] | length == 0
+    - (agent_config_yaml | from_yaml)['token'] is not defined or (agent_config_yaml | from_yaml)['token'] | length == 0
 
 - name: Add service environment variables
   when: extra_service_envs is defined
@@ -68,31 +73,6 @@
     path: "{{ systemd_dir }}/k3s-agent.service.env"
     line: "{{ item }}"
   with_items: "{{ extra_service_envs }}"
-
-- name: Delete any existing token from the environment if different from the new one
-  ansible.builtin.lineinfile:
-    state: absent
-    path: "{{ systemd_dir }}/k3s-agent.service.env"
-    regexp: "^K3S_TOKEN=\\s*(?!{{ token }}\\s*$)"
-
-- name: Add the token for joining the cluster to the environment
-  no_log: true # avoid logging the server token
-  ansible.builtin.lineinfile:
-    path: "{{ systemd_dir }}/k3s-agent.service.env"
-    line: "{{ item }}"
-  with_items:
-    - "K3S_TOKEN={{ token }}"
-
-- name: Modify ExecStart in k3s-agent.service to include API endpoint and extra args
-  register: k3s_agent_service
-  ansible.builtin.replace:
-    path: "{{ systemd_dir }}/k3s-agent.service"
-    regexp: '^ExecStart=\/usr\/local\/bin\/k3s \\\n\s*agent.*'
-    replace: |
-      ExecStart=/usr/local/bin/k3s \
-          agent \
-          --server https://{{ api_endpoint }}:{{ api_port }} \
-          {{ extra_agent_args }}
 
 - name: Enable and check K3s agent service
   ansible.builtin.systemd:

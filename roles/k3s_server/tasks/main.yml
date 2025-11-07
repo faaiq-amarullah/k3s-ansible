@@ -90,10 +90,10 @@
   when: inventory_hostname == groups[server_group][0] or ansible_host == groups[server_group][0]
   block:
     - name: Add the cluster init for init the cluster [Embedded ETCD]
-      when: server_config.datastore-endpoint is not defined
+      when: server_config['datastore-endpoint'] is not defined
       ansible.builtin.lineinfile:
         path: "/etc/rancher/k3s/config.yaml"
-        line: "cluster-init: true"
+        line: 'cluster-init: "true"'
         insertbefore: BOF
 
     - name: Remove any server line from K3s config
@@ -203,7 +203,7 @@
             - k3s_server_mv_result.rc == 0
 
     - name: Get the token if randomly generated
-      when: server_config.token is not defined or server_config.token | length == 0
+      when: server_config['token'] is not defined or server_config['token'] | length == 0
       block:
         - name: Wait for token
           ansible.builtin.wait_for:
@@ -246,7 +246,7 @@
         path: "/etc/rancher/k3s/config.yaml"
         line: "token: {{ token }}"
         insertbefore: BOF
-      when: server_config.token is not defined or server_config.token | length == 0
+      when: server_config['token'] is not defined or server_config['token'] | length == 0
 
     - name: Copy K3s service file
       ansible.builtin.template:

@@ -55,7 +55,7 @@
         - "'Status: active' in prereq_ufw_status['stdout']"
       community.general.ufw:
         rule: allow
-        port: "{{ server_config.https-listen-port | default('6443') }}"
+        port: "{{ (server_config_yaml | from_yaml)['https-listen-address'] | default('6443') }}"
         proto: tcp
 
     - name: If ufw enabled, open etcd ports
@@ -75,6 +75,39 @@
         src: '{{ item }}'
       loop: "{{ (cluster_cidr + ',' + service_cidr) | split(',') }}"
 
+    - name: If ufw enabled, open inter-node ports tcp
+      community.general.ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      with_items:
+        - 22           # SSH port
+        - 179          # Calico BGP Port
+        - 2376         # Node Driver Docker Daemon TLS
+        - 4240         # Cilium Cluster Heatlh Checks
+        - 4244:4245    # Cilium Hubble Server
+        - 5001         # Spegel (Embedded distributed registry)
+        - 6783         # Weave tcp port
+        - 8443         # Rancher webhook
+        - 9099         # Flannel livenessProbe
+        - 9345         # RKE2 Node registation
+        - 9443         # Rancher webhook
+        - 10250        # Kubelet metrics
+        - 10254        # Ingress controller livenessProbe
+        - 30000:32767  # NodePort range tcp
+
+    - name: If ufw enabled, open inter-node ports tcp
+      community.general.ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: udp
+      with_items:
+        - 6783:6784    # Weave udp port
+        - 8472         # Flannel VXLAN
+        - 51820        # Flannel Wireguard (IPv4)
+        - 51821        # Flannel Wireguard (IPv6)
+        - 30000:32767  # NodePort range udp
+
 - name: Allow Firewalld Exceptions
   when:
     - ansible_facts.services['firewalld.service'] is defined
@@ -82,7 +115,7 @@
   block:
     - name: If firewalld enabled, open api port
       ansible.posix.firewalld:
-        port: "{{ server_config.https-listen-port | default('6443') }}/tcp"
+        port: "{{ (server_config_yaml | from_yaml)['https-listen-address'] | default('6443') }}/tcp"
         zone: internal
         state: enabled
         permanent: true
@@ -105,14 +138,25 @@
         permanent: true
         immediate: true
       with_items:
-        - 4240/tcp   # Cilium Cluster Heatlh Checks
-        - 4244/tcp   # Cilium Hubble Server
-        - 4245/tcp   # Cilium Hubble Relay
-        - 5001/tcp   # Spegel (Embedded distributed registry)
-        - 8472/udp   # Flannel VXLAN
-        - 10250/tcp  # Kubelet metrics
-        - 51820/udp  # Flannel Wireguard (IPv4)
-        - 51821/udp  # Flannel Wireguard (IPv6)
+        - 22/tcp          # SSH port
+        - 179/tcp         # Calico BGP port
+        - 2376/tcp        # Node Driver Docker Daemon TLS port
+        - 4240/tcp        # Cilium Cluster Heatlh Checks
+        - 4244:4245/tcp   # Cilium Hubble Server
+        - 5001/tcp        # Spegel (Embedded distributed registry)
+        - 6783/tcp        # Weave tcp port
+        - 6783:6784/udp   # Weave udp port
+        - 8443/tcp        # Rancher Webhook
+        - 8472/udp        # Flannel VXLAN
+        - 9099/tcp        # Flannel livenessProbe
+        - 9345/tcp        # RKE2 Node registration
+        - 9443/tcp        # Rancher Webhook
+        - 10250/tcp       # Kubelet metrics
+        - 10254/tcp       # Ingress controller livenessProbe
+        - 51820/udp       # Flannel Wireguard (IPv4)
+        - 51821/udp       # Flannel Wireguard (IPv6)
+        - 30000:32767/tcp # NodePort range tcp
+        - 30000:32767/udp # NodePort range udp
 
     - name: If firewalld enabled, allow node CIDRs
       ansible.posix.firewalld:
