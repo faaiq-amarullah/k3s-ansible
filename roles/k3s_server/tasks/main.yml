@@ -62,7 +62,6 @@
         - /etc/rancher/k3s
         - /var/lib/rancher/k3s/server/tls
         - /var/lib/rancher/k3s/server/logs
-        - /var/lib/rancher/k3s/agent/etc/containerd
 
     - name: Configure audit log behaviour
       when: audit_config_yaml is defined

@@ -1,29 +1,49 @@
 k3s_cluster:
   children:
+    lb:
+      hosts:
+        ubuntu-01:
+        ubuntu-02:
+        ubuntu-03:
     server:
       hosts:
-        10.8.60.93:
-        10.8.60.94:
-        10.8.60.95:
+        ubuntu-01:
+        ubuntu-02:
+        ubuntu-03:
+    agent:
+      hosts:
+        localhost:
 
   # Required Vars
   vars:
+    # Ansible vars
     ansible_port: 22
     ansible_user: user
+
+    # Load Balancer vars
+    enable_lb: true
+    keepalived_vip: "10.8.60.130"
+    keepalived_auth_pass: "secretpass"
+    haproxy_listen_port: "6443"
+    haproxy_stats_enable: true
+    haproxy_stats_port: "8404"
+    haproxy_stats_user: "haproxy"
+    haproxy_stats_pass: "haproxypass"
+
+    # K3s vars
     k3s_version: v1.33.4+k3s1
     extra_service_envs: [ 'CATTLE_NEW_SIGNED_CERT_EXPIRATION_DAYS=3650' ]
-
+    # K3s server
     server_config_yaml: |
-      server: "https://10.8.60.100:6443"
+      server: "https://{{ keepalived_vip }}:{{ haproxy_listen_port }}"
       token: "vWobQYSpq8Qfz17rYEdbe6sX3zPtTK7WK01QGY0ZPMppAK9rjBvldlWIowxmydNx"
       node-name: "{{ ansible_hostname }}"
       node-ip: "{{ ansible_default_ipv4.address }}"
-      https-listen-address: "6443"
+      https-listen-port: "60443"
       etcd-expose-metrics: "true"
       tls-san:
-        - "api.k3s.my.test"
         - "127.0.0.1"
-        - "10.8.60.100"
+        - "{{ keepalived_vip }}"
       cluster-cidr: "10.100.0.0/16"
       service-cidr: "10.101.0.0/16"
       flannel-backend: "none"
@@ -35,7 +55,7 @@ k3s_cluster:
         - "servicelb"
         - "local-storage"
       node-label:
-        - "control=true"
+        - "server=true"
       kube-controller-manager-arg:
         - "bind-address=0.0.0.0"
       kube-scheduler-arg:
@@ -61,6 +81,27 @@ k3s_cluster:
         - "audit-log-maxsize=100"
         - "default-not-ready-toleration-seconds=30"
         - "default-unreachable-toleration-seconds=30"
+
+    # K3s agent
+    agent_config_yaml: |
+      server: "https://{{ keepalived_vip }}:{{ haproxy_listen_port }}"
+      token: "vWobQYSpq8Qfz17rYEdbe6sX3zPtTK7WK01QGY0ZPMppAK9rjBvldlWIowxmydNx"
+      node-name: "{{ ansible_hostname }}"
+      node-ip: "{{ ansible_default_ipv4.address }}"
+      disable-default-registry-endpoint: "false"
+      node-label:
+        - "agent=true"
+      kubelet-arg:
+        - "anonymous-auth=false"
+        - "eviction-max-pod-grace-period=60"
+        - "kube-reserved=cpu=200m,memory=512Mi,ephemeral-storage=1Gi"
+        - "system-reserved=cpu=200m,memory=512Mi,ephemeral-storage=1Gi"
+        - "eviction-hard=memory.available<200Mi,nodefs.available<10%,nodefs.inodesFree<5%"
+        - "eviction-soft=memory.available<500Mi,nodefs.available<10%,nodefs.inodesFree<10%"
+        - "eviction-soft-grace-period=memory.available=1m,nodefs.available=1m,nodefs.inodesFree=1m"
+        - "image-gc-high-threshold=85"
+        - "image-gc-low-threshold=80"
+        - "max-pods=250"
 
     audit_config_yaml: |
       apiVersion: audit.k8s.io/v1

@@ -1,0 +1,20 @@
+frontend k8s_api_fe
+    bind *:{{ haproxy_listen_port }}
+    mode tcp
+    option tcplog
+    default_backend k8s_api_be
+
+backend k8s_api_be
+    mode tcp
+{% for host in groups['lb'] %}
+    server {{ hostvars[host].ansible_hostname | default(host) }} {{ hostvars[host].ansible_default_ipv4.address }}:{{ (server_config_yaml | from_yaml)['https-listen-port'] | default('6443') }} check inter 1s
+{% endfor %}
+
+{% if haproxy_stats_enable %}
+listen stats
+    bind *:{{ haproxy_stats_port }}
+    mode http
+    stats enable
+    stats uri /haproxy?stats
+    stats auth {{ haproxy_stats_user }}:{{ haproxy_stats_pass }}
+{% endif %}

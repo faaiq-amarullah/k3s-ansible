@@ -8,6 +8,13 @@
     - role: airgap
     - role: raspberrypi
 
+- name: Setup Load Balancer
+  hosts: lb
+  become: true
+  roles:
+    - role: load_balancer
+      when: enable_lb | bool
+
 - name: Setup K3S server
   hosts: server
   become: true

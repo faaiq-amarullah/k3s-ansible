@@ -1,0 +1,114 @@
+---
+- name: Allow UFW Exceptions
+  when:
+    - ansible_facts.services['ufw'] is defined
+    - ansible_facts.services['ufw'].state == 'running'
+  block:
+    - name: Get ufw status
+      ansible.builtin.command:
+        cmd: ufw status
+      changed_when: false
+      register: prereq_ufw_status
+
+    - name: If ufw enabled, open haproxy ports
+      community.general.ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      with_items:
+        - "{{ haproxy_listen_port }}"
+        - "{{ haproxy_stats_port }}"
+
+- name: Allow Firewalld Exceptions
+  when:
+    - ansible_facts.services['firewalld.service'] is defined
+    - ansible_facts.services['firewalld.service'].state == 'running'
+  block:
+    - name: If firewalld enabled, open haproxy ports
+      ansible.posix.firewalld:
+        port: "{{ item }}"
+        zone: internal
+        state: enabled
+        permanent: true
+        immediate: true
+      with_items:
+        - "{{ haproxy_listen_port }}/tcp"
+        - "{{ haproxy_stats_port }}/tcp"
+
+- name: Ensure apt cache is up-to-date (Debian/Ubuntu)
+  ansible.builtin.apt:
+    update_cache: yes
+    cache_valid_time: 3600
+  when: ansible_os_family == "Debian"
+
+- name: Install required packages (haproxy, keepalived)
+  ansible.builtin.package:
+    name:
+      - haproxy
+      - keepalived
+    state: present
+
+- name: Ensure /etc/haproxy directory exists
+  ansible.builtin.file:
+    path: /etc/haproxy
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Add HAProxy configuration for the Kubernetes API
+  ansible.builtin.blockinfile:
+    path: /etc/haproxy/haproxy.cfg
+    marker: "# {mark} KUBERNETES API LB"
+    block: "{{ lookup('template', 'haproxy.cfg.j2') }}"
+  notify: restart haproxy
+
+
+- name: Create haproxy stats credentials file (optional)
+  ansible.builtin.lineinfile:
+    path: /etc/haproxy/users.lst
+    create: yes
+    line: "{{ haproxy_stats_user }}:{{ haproxy_stats_pass }}"
+  when: haproxy_stats_enable
+
+- name: Ensure haproxy enabled and running
+  ansible.builtin.systemd:
+    name: haproxy
+    enabled: yes
+    state: started
+
+- name: Deploy keepalived config
+  ansible.builtin.template:
+    src: keepalived.conf.j2
+    dest: /etc/keepalived/keepalived.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify:
+    - restart keepalived
+
+- name: Ensure keepalived enabled and running
+  ansible.builtin.systemd:
+    name: keepalived
+    enabled: yes
+    state: started
+
+- name: Ensure IP forwarding is enabled (sysctl)
+  ansible.builtin.sysctl:
+    name: net.ipv4.ip_forward
+    value: "1"
+    state: present
+    reload: yes
+
+- name: Force run handlers for restart services
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for haproxy to be listening on VIP port (try only on nodes that have VIP)
+  ansible.builtin.wait_for:
+    host: "{{ keepalived_vip }}"
+    port: "{{ haproxy_listen_port }}"
+    timeout: 10
+  delegate_to: localhost
+  run_once: true
+  become: false
+  when: inventory_hostname == groups['lb'][0]

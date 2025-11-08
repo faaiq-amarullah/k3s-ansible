@@ -1,0 +1,7 @@
+---
+keepalived_auth_pass: "secretpass"
+haproxy_listen_port: "6443"
+haproxy_stats_enable: true
+haproxy_stats_port: "8404"
+haproxy_stats_user: "haproxy"
+haproxy_stats_pass: "haproxypass"
