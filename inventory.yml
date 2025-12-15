@@ -32,11 +32,13 @@ k3s_cluster:
 
     # K3s vars
     k3s_version: v1.33.4+k3s1
+    token: "vWobQYSpq8Qfz17rYEdbe6sX3zPtTK7WK01QGY0ZPMppAK9rjBvldlWIowxmydNx"
     extra_service_envs: [ 'CATTLE_NEW_SIGNED_CERT_EXPIRATION_DAYS=3650' ]
-    # K3s server
+
+    # K3s server configuration
     server_config_yaml: |
       server: "https://{{ keepalived_vip }}:{{ haproxy_listen_port }}"
-      token: "vWobQYSpq8Qfz17rYEdbe6sX3zPtTK7WK01QGY0ZPMppAK9rjBvldlWIowxmydNx"
+      token: "{{ token }}"
       node-name: "{{ ansible_hostname }}"
       node-ip: "{{ ansible_default_ipv4.address }}"
       https-listen-port: "60443"
@@ -82,10 +84,10 @@ k3s_cluster:
         - "default-not-ready-toleration-seconds=30"
         - "default-unreachable-toleration-seconds=30"
 
-    # K3s agent
+    # K3s agent configuration
     agent_config_yaml: |
       server: "https://{{ keepalived_vip }}:{{ haproxy_listen_port }}"
-      token: "vWobQYSpq8Qfz17rYEdbe6sX3zPtTK7WK01QGY0ZPMppAK9rjBvldlWIowxmydNx"
+      token: "{{ token }}"
       node-name: "{{ ansible_hostname }}"
       node-ip: "{{ ansible_default_ipv4.address }}"
       disable-default-registry-endpoint: "false"
